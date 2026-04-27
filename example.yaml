@@ -1,0 +1,83 @@
+esphome:
+  name: lilygo
+  # --- Hardware configuration starts ---
+  platformio_options:
+    # Unless noted otherwise, based on https://github.com/Xinyuan-LilyGO/LilyGo-EPD47/blob/1eb6119fc31fcff7a6bafecb09f4225313859fc5/examples/demo/platformio.ini#L37
+    upload_speed: 921600
+    monitor_speed: 115200
+    board_build.mcu: esp32s3
+    board_build.f_cpu: 240000000L
+    board_build.flash_size: 16MB
+    board_build.flash_mode: qio
+    board_build.flash_type: qspi
+    board_build.psram_type: opi
+    board_build.memory_type: qspi_opi
+    board_build.boot_freq: 80m
+    build_flags: "-DBOARD_HAS_PSRAM"
+
+esp32:
+  variant: esp32s3
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+
+  framework:
+    type: esp-idf
+    version: recommended
+    advanced:
+      # Used by the display driver for fast data transforms.
+      # TODO: Have the display driver add this automatically.
+      include_builtin_idf_components: ["esp_driver_rmt"]
+
+psram:
+  mode: octal
+  speed: 80Mhz
+# --- Hardware configuration ends ---
+
+# Pull in the display driver.
+external_components:
+  - source: ./components
+  # Could also be this if you want to use in your own device without forking
+  # this repository.
+  # - source: github://jellybob/lilygo_t5_epaper_esphome_components
+
+# Everything down here is just normal esphome stuff, with the exception of
+# `display`.
+logger:
+  # You probably don't want this on a real device.
+  level: VERBOSE
+
+# The button labelled SENSOR_VN on the board.
+binary_sensor:
+  - platform: gpio
+    id: sensor_vn_button
+    pin: 
+      number: GPIO21
+      inverted: true
+    name: "SENSOR_VN"
+    on_press:
+      - logger.log: Button pressed, updating display
+      - component.update: epaper_display
+
+display:
+  - platform: ed047tc1 # Use the custom display driver
+    id: epaper_display # Just a name, set it how you want
+    board_type: lilygo-screen-4.7-s3-2.4 # Currently the only supported board type
+    rotation: 270 # I'm using my display with the USB port at the bottom
+    update_interval: 1min # Don't try to set this to anything silly fast, epaper is slow. 1 second refresh just about works.
+    lambda: |-
+      // A silly example display. Each time the display refreshes the counter increments by one.
+      it.fill(COLOR_OFF);
+      it.printf(it.get_width() / 2, it.get_height() / 2, id(font_large), COLOR_ON, TextAlign::CENTER, "%d", id(counter));
+      id(counter) = (id(counter) >= 1000) ? 0 : id(counter) + 1;
+
+# Used by the example display.
+globals:
+  - id: counter
+    type: int
+    initial_value: '0'
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_large
+    size: 250
+

@@ -1,0 +1,5 @@
+/.esphome/
+/secrets.yaml
+
+# Ignore compiled Python bytecode in the driver.
+*.pyc
