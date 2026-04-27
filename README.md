@@ -30,7 +30,6 @@ esphome upload example.yaml
 
 - Move inclusion of esp_driver_rmt component into the code generation of the display
   driver.
-- Make full screen refresh interval configurable
 
 ## Implementation notes
 
@@ -52,11 +51,7 @@ heavily LLM guided.
 
 That process allows skipping updates on display rows which don't have any changed pixels
 and so should result in faster updates and lower power usage because the display receives
-power for shorter periods. Every 20 screen updates the entire display is updated even
-if some rows don't strictly require it. This may not be neccessary now, and I intend to
-at least make that behaviour configurable. Initially I wasn't powering off the display
-correctly and I believe that may have been causing artifacting that had been attributed
-to state drfit.
+power for shorter periods.
 
 I've also modified the power off code slightly. There's no longer two distinct `epd_poweroff`
 functions because in practice `epd_poweroff` would cause display artifacting when the
