@@ -127,7 +127,7 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
     uint8_t line[EPD_WIDTH / 2];
     memset(line, 255, EPD_WIDTH / 2);
     Rect_t area = params->area;
-    uint8_t *ptr = params->data_ptr;
+    uint8_t *data = params->data_ptr;
 
     if (params->frame == 0)
         reset_lut(conversion_lut);
@@ -137,11 +137,12 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
         if (i < area.y || i >= area.y + area.height)
             continue;
 
+        uint8_t *row_ptr = data + i * (EPD_WIDTH / 2);
+
         uint32_t *lp;
         bool shifted = false;
         if (area.width == EPD_WIDTH && area.x == 0) {
-            lp = (uint32_t *)ptr;
-            ptr += EPD_WIDTH / 2;
+            lp = (uint32_t *)row_ptr;
         } else {
             uint8_t *buf_start = line;
             uint32_t line_bytes = area.width / 2 + area.width % 2;
@@ -152,8 +153,7 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
             }
             uint32_t max_bytes = EPD_WIDTH / 2 - (uint32_t)(buf_start - line);
             if (line_bytes > max_bytes) line_bytes = max_bytes;
-            memcpy(buf_start, ptr, line_bytes);
-            ptr += area.width / 2 + area.width % 2;
+            memcpy(buf_start, row_ptr + area.x / 2, line_bytes);
 
             if (area.width % 2 == 1 && area.x / 2 + area.width / 2 + 1 < EPD_WIDTH)
                 *(buf_start + line_bytes - 1) |= 0xF0;
