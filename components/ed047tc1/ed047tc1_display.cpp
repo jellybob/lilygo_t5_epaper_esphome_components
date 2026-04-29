@@ -127,7 +127,7 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
     uint8_t line[EPD_WIDTH / 2];
     memset(line, 255, EPD_WIDTH / 2);
     Rect_t area = params->area;
-    uint8_t *ptr = params->data_ptr;
+    uint8_t *data = params->data_ptr;
 
     if (params->frame == 0)
         reset_lut(conversion_lut);
@@ -137,11 +137,12 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
         if (i < area.y || i >= area.y + area.height)
             continue;
 
+        uint8_t *row_ptr = data + i * (EPD_WIDTH / 2);
+
         uint32_t *lp;
         bool shifted = false;
         if (area.width == EPD_WIDTH && area.x == 0) {
-            lp = (uint32_t *)ptr;
-            ptr += EPD_WIDTH / 2;
+            lp = (uint32_t *)row_ptr;
         } else {
             uint8_t *buf_start = line;
             uint32_t line_bytes = area.width / 2 + area.width % 2;
@@ -152,8 +153,7 @@ static void IRAM_ATTR provide_out(OutputParams *params) {
             }
             uint32_t max_bytes = EPD_WIDTH / 2 - (uint32_t)(buf_start - line);
             if (line_bytes > max_bytes) line_bytes = max_bytes;
-            memcpy(buf_start, ptr, line_bytes);
-            ptr += area.width / 2 + area.width % 2;
+            memcpy(buf_start, row_ptr + area.x / 2, line_bytes);
 
             if (area.width % 2 == 1 && area.x / 2 + area.width / 2 + 1 < EPD_WIDTH)
                 *(buf_start + line_bytes - 1) |= 0xF0;
@@ -282,6 +282,15 @@ void ED047TC1Display::setup() {
     }
     memset(this->buffer_, 0xFF, buf_size);
 
+    this->prev_buffer_ = (uint8_t *)heap_caps_malloc(buf_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!this->prev_buffer_) {
+        ESP_LOGE(TAG, "Failed to allocate prev_buffer in PSRAM");
+        this->mark_failed();
+        return;
+    }
+    // Initialize to white, matching the hardware state after clear_screen() below.
+    memset(this->prev_buffer_, 0xFF, buf_size);
+
     ESP_LOGCONFIG(TAG, "Initial screen clear...");
     epd_poweron();
     clear_screen();
@@ -305,18 +314,58 @@ void ED047TC1Display::fill(Color color) {
         memset(this->buffer_, fill_byte, EPD_WIDTH / 2 * EPD_HEIGHT);
 }
 
+// Returns the bounding box of pixels that differ between buf_a and buf_b, or
+// a zero-area rect {0,0,0,0} if the buffers are identical.
+static Rect_t dirty_rect(const uint8_t *buf_a, const uint8_t *buf_b) {
+    const int32_t stride = EPD_WIDTH / 2;
+    int32_t min_x = EPD_WIDTH, max_x = -1;
+    int32_t min_y = EPD_HEIGHT, max_y = -1;
+    for (int32_t y = 0; y < EPD_HEIGHT; y++) {
+        const uint8_t *row_a = buf_a + y * stride;
+        const uint8_t *row_b = buf_b + y * stride;
+        for (int32_t b = 0; b < stride; b++) {
+            if (row_a[b] != row_b[b]) {
+                int32_t px = b * 2;
+                if (y     < min_y) min_y = y;
+                if (y     > max_y) max_y = y;
+                if (px    < min_x) min_x = px;
+                if (px + 1 > max_x) max_x = px + 1;
+            }
+        }
+    }
+    if (max_x < 0)
+        return {.x = 0, .y = 0, .width = 0, .height = 0};
+    return {
+        .x      = min_x,
+        .y      = min_y,
+        .width  = max_x - min_x + 1,
+        .height = max_y - min_y + 1,
+    };
+}
+
 void ED047TC1Display::update() {
     this->do_update_();
 
-    Rect_t area = {.x = 0, .y = 0, .width = EPD_WIDTH, .height = EPD_HEIGHT};
+    const uint32_t buf_size = (EPD_WIDTH / 2) * EPD_HEIGHT;
+    Rect_t area = dirty_rect(this->buffer_, this->prev_buffer_);
+
+    if (area.width == 0) {
+        ESP_LOGD(TAG, "No pixel changes, skipping hardware update");
+        return;
+    }
+
+    ESP_LOGD(TAG, "Partial update: (%d,%d) %dx%d", area.x, area.y, area.width, area.height);
+
     epd_poweron();
-    // Drive all pixels white before rendering. The LUT-based grayscale algorithm
-    // only sends darken pulses (never lighten), so without these passes previously-black
-    // pixels would stay black even when the new frame wants them white.
-    // E-paper particles resist moving back to white, so multiple passes are needed.
+    // Drive changed pixels white before rendering. The LUT-based grayscale algorithm
+    // only sends darken pulses (never lighten), so previously-dark pixels must be
+    // whitened first. Multiple passes are needed because e-paper particles resist
+    // moving back to white.
     for (int i = 0; i < 4; i++) push_pixels(area, 50, 1);
     draw_image(area, this->buffer_);
     epd_poweroff();
+
+    memcpy(this->prev_buffer_, this->buffer_, buf_size);
 }
 
 void ED047TC1Display::draw_absolute_pixel_internal(int x, int y, Color color) {
