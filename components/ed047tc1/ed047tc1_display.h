@@ -34,6 +34,8 @@ class ED047TC1Display : public display::DisplayBuffer {
   void draw_absolute_pixel_internal(int x, int y, Color color) override;
   int get_width_internal() override { return EPD_WIDTH; }
   int get_height_internal() override { return EPD_HEIGHT; }
+
+  uint8_t *prev_buffer_{nullptr};
 };
 
 }  // namespace ed047tc1
